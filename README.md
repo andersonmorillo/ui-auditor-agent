@@ -16,24 +16,48 @@ La imagen corresponde a una aplicación de prueba con defectos intencionales. Lo
 
 ## Instalación
 
-Requisitos: Node.js 22.19 o posterior, Google Chrome y un agente local compatible con MCP. Clona este repositorio, entra en su carpeta y ejecuta:
+Requisitos: Node.js 22.19 o posterior, Google Chrome y un agente local compatible con MCP. Ejecuta:
 
 ```powershell
+git clone https://github.com/andersonmorillo/ui-auditor-agent.git
+cd ui-auditor-agent
 npm ci
 npm run setup
 ```
 
-`setup` crea `.mcp.json` para Claude Code y `.cursor/mcp.json` para Cursor, con las rutas absolutas de esta instalación. Conserva los otros servidores configurados y no reemplaza un `ui-auditor` que apunte a otra instalación. Estos archivos son locales y están excluidos de Git; vuelve a ejecutar setup después de mover el proyecto.
+`setup` crea `.mcp.json` para Claude Code y `.cursor/mcp.json` para Cursor, con las rutas absolutas de esta instalación. Conserva los otros servidores configurados y no reemplaza un `ui-auditor` que apunte a otra instalación. Estos archivos son locales y están excluidos de Git. Si mueves el clon, elimina solo su entrada `ui-auditor` de esos archivos antes de volver a ejecutar `setup`.
 
-Para Codex, copia y ejecuta el comando `codex mcp add` que imprime `setup`: contiene las rutas de tu instalación. Comprueba después que el servidor aparece:
+## Configuración global para otros proyectos
+
+Instala el auditor una vez y registra el MCP en la configuración de usuario del agente. El cliente inicia el servidor local cuando se conecta, usando esta instalación; puedes evaluar cualquier aplicación accesible desde ese computador.
+
+**Codex:** copia y ejecuta el comando `codex mcp add` que imprime `setup`. Se guarda en `~/.codex/config.toml` y queda disponible al abrir otros proyectos. Comprueba después que el servidor aparece:
 
 ```powershell
 codex mcp list
 ```
 
-Fuentes: [MCP en Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [MCP en Claude Code](https://code.claude.com/docs/en/mcp), [MCP en Cursor Agent y CLI](https://prod.cursor.com/docs/cli/mcp).
+**Claude Code:** ejecuta el comando `claude mcp add --scope user --transport stdio ui-auditor -- ...` que imprime `setup`. Se guarda en `~/.claude.json` para todos tus proyectos. Verifica la conexión desde otra carpeta:
 
-Claude Code carga `.mcp.json` desde este proyecto; Cursor usa `.cursor/mcp.json`. Para usarlo desde otro proyecto, añade la entrada `ui-auditor` generada por `setup` a la configuración de ese proyecto, conservando sus otros servidores. Las rutas absolutas apuntan al clon donde instalaste las dependencias. Los agentes remotos necesitan su propia instalación del servidor y acceso a la aplicación que se evalúa.
+```powershell
+claude mcp get ui-auditor
+```
+
+**Cursor y Cursor Agent:** añade la entrada `ui-auditor` de `.cursor/mcp.json` a `~/.cursor/mcp.json`, dentro de `mcpServers`, conservando los demás servidores. `~` representa tu carpeta de usuario. Puedes comprobar las herramientas desde otra carpeta:
+
+```powershell
+cursor-agent mcp list-tools ui-auditor
+```
+
+Los comandos impresos y las entradas JSON contienen las rutas absolutas del clon donde instalaste las dependencias. Si mueves esa carpeta, actualiza también las rutas de las entradas globales.
+
+Fuentes: [MCP en Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [ámbito de usuario en Claude Code](https://code.claude.com/docs/en/mcp#user-scope), [configuración global de Cursor](https://cursor.com/docs/mcp#configuration-locations).
+
+## Configuración por proyecto
+
+Claude Code carga `.mcp.json` desde este proyecto; Cursor usa `.cursor/mcp.json`. Si prefieres configurar el auditor para un proyecto concreto, añade la entrada `ui-auditor` generada por `setup` a la configuración de ese proyecto, conservando sus otros servidores. Una entrada con el mismo nombre definida por el proyecto puede tener prioridad sobre la global.
+
+Los agentes remotos necesitan su propia instalación del servidor y acceso a la aplicación que se evalúa.
 
 Después de recargar los MCP, confirma que aparecen `audit_start`, `audit_capture` y `browser_navigate`. `npm start` inicia el transporte stdio; no abre un sitio ni un puerto HTTP.
 
@@ -97,15 +121,16 @@ El workflow de GitHub Actions instala Node.js y Chrome en Ubuntu, ejecuta la pru
 
 El checklist permite cubrir todos los aspectos de la interfaz, pero la cobertura depende de las tareas realmente exploradas. Un resultado automático no certifica accesibilidad; un único navegador no demuestra compatibilidad; la revisión de un agente no mide satisfacción de usuarios reales. Estas limitaciones deben quedar visibles como parciales o pendientes, con propuestas concretas de validación. Las pruebas de seguridad, carga y lógica interna requieren evaluaciones específicas fuera de esta herramienta de interfaz.
 
-## Publicar en GitHub
+## Desarrollo
 
-Con el código guardado en Git y GitHub CLI autenticado, puedes crear el repositorio y subirlo:
+Antes de subir cambios, ejecuta las pruebas y la demostración:
 
 ```sh
-gh repo create ui-auditor --public --source=. --remote=origin --push
+npm test
+npm run demo -- --lighthouse
 ```
 
-También puedes crear un repositorio vacío desde GitHub, añadir su URL como `origin` y subir la rama `main`. Los reportes, dependencias, configuraciones MCP locales, variables de entorno y cachés de Graft quedan excluidos de Git. El repositorio contiene una captura de la aplicación de prueba para ilustrar el resultado.
+Los reportes, dependencias, configuraciones MCP locales, variables de entorno y cachés de Graft quedan excluidos de Git. El repositorio contiene una captura de la aplicación de prueba para ilustrar el resultado.
 
 ## Licencia
 
