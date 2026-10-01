@@ -1,0 +1,14 @@
+node_modules/
+reports/
+.playwright-mcp/
+.mcp.json
+.cursor/mcp.json
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

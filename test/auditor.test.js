@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { startFixture } from './fixture.js';
+
+test('MCP: interacción, axe, evidencia, validación, persistencia y reporte seguro', { timeout: 120000 }, async () => {
+  const reportsRoot = await mkdtemp(path.join(os.tmpdir(), 'ui-auditor-test-'));
+  const fixture = await startFixture();
+  const client = new Client({ name: 'ui-auditor-test', version: '1.0.0' });
+  const transport = () => new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('../src/server.js', import.meta.url))], env: { ...process.env, UI_AUDITOR_REPORTS: reportsRoot, UI_AUDITOR_HEADLESS: '1' }, stderr: 'pipe' });
+  await client.connect(transport());
+  const call = async (name, args = {}) => {
+    const result = await client.callTool({ name, arguments: args }, undefined, { timeout: 120000 });
+    assert.ok(!result.isError, result.content[0]?.text);
+    return result;
+  };
+  const json = result => JSON.parse(result.content.find(item => item.type === 'text').text);
+  try {
+    const tools = (await client.listTools()).tools;
+    assert.ok(tools.some(tool => tool.name === 'browser_click'));
+    assert.ok(tools.some(tool => tool.name === 'audit_lighthouse'));
+    assert.ok(!tools.some(tool => tool.name === 'browser_run_code_unsafe'));
+    const prompt = await client.getPrompt({ name: 'audit_application', arguments: { url: fixture.url } });
+    assert.match(prompt.messages[0].content.text, /audit_capture/);
+    const { audit_id } = json(await call('audit_start', { title: '<script>window.pwned=1</script>', url: fixture.url }));
+    await call('browser_navigate', { url: fixture.url });
+    await call('browser_click', { target: '#open-settings' });
+    await call('browser_type', { target: '#email', text: 'dato-invalido' });
+    await call('browser_click', { target: '#save' });
+    const page = await call('browser_snapshot');
+    assert.match(page.content[0].text, /Revisa el correo de contacto/);
+    const desktopResult = await call('audit_capture', { audit_id, label: 'Error al guardar', mask_selectors: ['#email'] });
+    const desktop = json(desktopResult);
+    assert.ok(desktopResult.content.some(item => item.type === 'image' && item.data.length > 100));
+    assert.ok(desktop.capture.axe.violations.some(rule => rule.id === 'label'));
+    assert.equal(desktop.capture.overflow.horizontal, false);
+    assert.equal(desktop.capture.viewport.width, 1440);
+    await call('browser_resize', { width: 390, height: 844 });
+    const mobile = json(await call('audit_capture', { audit_id, label: 'Vista móvil', run_axe: false }));
+    assert.equal(mobile.capture.overflow.horizontal, true);
+    await call('audit_finding', { audit_id, category: 'feedback', severity: 'medium', title: 'Mensaje sin anuncio accesible', observed: '<img src=x onerror=alert(1)>', impact: 'El resultado no se anuncia automáticamente.', recommendation: 'Usar role=alert o aria-live según el tipo de mensaje.', steps: ['Abrir configuración', 'Guardar un correo inválido'], evidence_id: desktop.evidence_id, confidence: 'confirmed', region: { x: 15, y: 15, width: 100, height: 60 } });
+    await call('audit_assess', { audit_id, category: 'feedback', status: 'partial', notes: 'Probado error; éxito pendiente.', evidence_ids: [desktop.evidence_id] });
+    const invalid = await client.callTool({ name: 'audit_assess', arguments: { audit_id, category: 'visual', status: 'reviewed', notes: 'Sin evidencia' } });
+    assert.equal(invalid.isError, true);
+    const traversal = await client.callTool({ name: 'audit_status', arguments: { audit_id: '../outside' } });
+    assert.equal(traversal.isError, true);
+    const absent = await client.callTool({ name: 'audit_finding', arguments: { audit_id, category: 'visual', severity: 'low', title: 'No probado', observed: 'No probado', impact: 'No probado', recommendation: 'No probado', steps: ['No probado'], evidence_id: '11111111-1111-4111-8111-111111111111', confidence: 'hypothesis' } });
+    assert.equal(absent.isError, true);
+    const report = json(await call('audit_report', { audit_id, summary: 'Auditoría de la aplicación de prueba; no representa una aplicación real del usuario.' }));
+    const html = await readFile(report.report, 'utf8');
+    assert.ok(html.includes('data:image/png;base64,'));
+    assert.ok(html.includes('&lt;script&gt;window.pwned=1&lt;/script&gt;'));
+    assert.ok(!html.includes('<img src=x onerror=alert(1)>'));
+    assert.match(html, /annotation/);
+    assert.ok(report.pending.includes('compatibility'));
+    const saved = JSON.parse(await readFile(report.json, 'utf8'));
+    assert.equal(saved.captures.length, 2);
+    assert.ok(saved.findings.some(finding => finding.source === 'axe-core'));
+    assert.equal(json(await call('audit_status', { audit_id })).audit.id, audit_id);
+    await call('browser_close');
+    await client.close();
+    await client.connect(transport());
+    assert.equal(json(await call('audit_status', { audit_id })).audit.captures.length, 2);
+  } finally {
+    await client.close();
+    await fixture.close();
+    await rm(reportsRoot, { recursive: true, force: true });
+  }
+});
