@@ -7,6 +7,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startFixture } from './fixture.js';
+import { addFinding, renderReport } from '../src/audit.js';
 
 test('MCP: interacción, axe, evidencia, validación, persistencia y reporte seguro', { timeout: 120000 }, async () => {
   const reportsRoot = await mkdtemp(path.join(os.tmpdir(), 'ui-auditor-test-'));
@@ -40,35 +41,59 @@ test('MCP: interacción, axe, evidencia, validación, persistencia y reporte seg
     assert.ok(desktop.capture.axe.violations.some(rule => rule.id === 'label'));
     assert.equal(desktop.capture.overflow.horizontal, false);
     assert.equal(desktop.capture.viewport.width, 1440);
+    const axeFindings = desktop.findings_total;
+    const repeated = json(await call('audit_capture', { audit_id, label: 'Error al guardar · repetida' }));
+    assert.equal(repeated.findings_total, axeFindings, 'axe repetido en la misma página no debe duplicar hallazgos');
+    const merged = json(await call('audit_status', { audit_id })).audit.findings.find(finding => finding.key === `axe:label:${desktop.capture.url}`);
+    assert.deepEqual(merged.also_seen_in, [repeated.evidence_id]);
     await call('browser_resize', { width: 390, height: 844 });
     const mobile = json(await call('audit_capture', { audit_id, label: 'Vista móvil', run_axe: false }));
     assert.equal(mobile.capture.overflow.horizontal, true);
-    await call('audit_finding', { audit_id, category: 'feedback', severity: 'medium', title: 'Mensaje sin anuncio accesible', observed: '<img src=x onerror=alert(1)>', impact: 'El resultado no se anuncia automáticamente.', recommendation: 'Usar role=alert o aria-live según el tipo de mensaje.', steps: ['Abrir configuración', 'Guardar un correo inválido'], evidence_id: desktop.evidence_id, confidence: 'confirmed', region: { x: 15, y: 15, width: 100, height: 60 } });
+    await call('audit_finding', { audit_id, kind: 'bug', category: 'feedback', severity: 'medium', title: 'Mensaje sin anuncio accesible', observed: '<img src=x onerror=alert(1)>', impact: 'El resultado no se anuncia automáticamente.', recommendation: 'Usar role=alert o aria-live según el tipo de mensaje.', steps: ['Abrir configuración', 'Guardar un correo inválido'], evidence_id: desktop.evidence_id, confidence: 'confirmed', region: { x: 15, y: 15, width: 100, height: 60 } });
     await call('audit_assess', { audit_id, category: 'feedback', status: 'partial', notes: 'Probado error; éxito pendiente.', evidence_ids: [desktop.evidence_id] });
     const invalid = await client.callTool({ name: 'audit_assess', arguments: { audit_id, category: 'visual', status: 'reviewed', notes: 'Sin evidencia' } });
     assert.equal(invalid.isError, true);
     const traversal = await client.callTool({ name: 'audit_status', arguments: { audit_id: '../outside' } });
     assert.equal(traversal.isError, true);
-    const absent = await client.callTool({ name: 'audit_finding', arguments: { audit_id, category: 'visual', severity: 'low', title: 'No probado', observed: 'No probado', impact: 'No probado', recommendation: 'No probado', steps: ['No probado'], evidence_id: '11111111-1111-4111-8111-111111111111', confidence: 'hypothesis' } });
+    const absent = await client.callTool({ name: 'audit_finding', arguments: { audit_id, kind: 'improvement', category: 'visual', severity: 'low', title: 'No probado', observed: 'No probado', impact: 'No probado', recommendation: 'No probado', steps: ['No probado'], evidence_id: '11111111-1111-4111-8111-111111111111', confidence: 'hypothesis' } });
     assert.equal(absent.isError, true);
+    const unknown = await client.callTool({ name: 'audit_unknown', arguments: { audit_id } });
+    assert.equal(unknown.isError, true);
     const report = json(await call('audit_report', { audit_id, summary: 'Auditoría de la aplicación de prueba; no representa una aplicación real del usuario.' }));
     const html = await readFile(report.report, 'utf8');
-    assert.ok(html.includes('data:image/png;base64,'));
+    assert.equal(html.split('data:image/png;base64,').length - 1, 3, 'cada captura se incorpora una sola vez');
+    assert.ok(html.includes(`href="#capture-${repeated.evidence_id}"`), 'la regla axe repetida enlaza las dos capturas');
+    assert.match(html, /Puntuación por aspecto/);
+    assert.match(html, /Para llegar a 100/);
+    assert.match(html, /<section data-group id="bugs">/);
+    assert.ok(!html.includes('Selectores') && !html.includes('failureSummary'), 'el reporte no muestra datos técnicos');
     assert.ok(html.includes('&lt;script&gt;window.pwned=1&lt;/script&gt;'));
     assert.ok(!html.includes('<img src=x onerror=alert(1)>'));
     assert.match(html, /annotation/);
     assert.ok(report.pending.includes('compatibility'));
     const saved = JSON.parse(await readFile(report.json, 'utf8'));
-    assert.equal(saved.captures.length, 2);
+    assert.equal(html.split('class="auto"').length - 1, new Set(saved.findings.filter(finding => finding.source !== 'agent').map(finding => finding.source === 'axe-core' ? finding.key.split(':')[1] : finding.title)).size, 'una entrada por regla automática');
+    assert.equal(saved.captures.length, 3);
     assert.ok(saved.findings.some(finding => finding.source === 'axe-core'));
     assert.equal(json(await call('audit_status', { audit_id })).audit.id, audit_id);
     await call('browser_close');
     await client.close();
     await client.connect(transport());
-    assert.equal(json(await call('audit_status', { audit_id })).audit.captures.length, 2);
+    assert.equal(json(await call('audit_status', { audit_id })).audit.captures.length, 3);
   } finally {
     await client.close();
     await fixture.close();
     await rm(reportsRoot, { recursive: true, force: true });
   }
+});
+
+test('Hallazgos con evidencia de Lighthouse', async () => {
+  const run = { id: '22222222-2222-4222-8222-222222222222', device: 'mobile', final_url: 'https://example.com/', created_at: new Date().toISOString(), score: 0.5, metrics: {}, opportunities: [], screenshot: null };
+  const audit = { id: '33333333-3333-4333-8333-333333333333', title: 'Lighthouse', url: 'https://example.com/', created_at: run.created_at, scope: 'Prueba', flows: [], captures: [], findings: [], assessments: {}, lighthouse: [run] };
+  const input = { category: 'performance', severity: 'high', title: 'LCP lento', observed: 'LCP de 5 s', impact: 'Carga lenta', recommendation: 'Optimizar la imagen principal', steps: ['Ejecutar Lighthouse'], evidence_id: run.id, confidence: 'confirmed' };
+  assert.throws(() => addFinding(audit, { ...input, region: { x: 0, y: 0, width: 10, height: 10 } }), /region/);
+  assert.equal(addFinding(audit, input).url, run.final_url);
+  const html = await renderReport(os.tmpdir(), audit, 'Resumen');
+  assert.match(html, new RegExp(`Evidencia: <a href="#capture-${run.id}">Lighthouse · mobile</a>`));
+  assert.ok(html.includes('<span class="value good">85</span>'), 'un problema alto confirmado resta 15 puntos al aspecto');
 });

@@ -12,7 +12,7 @@ No necesita claves de API adicionales: utiliza el agente que ya tengas conectado
 
 ![Vista del reporte de UI Auditor](docs/report-preview.png)
 
-La imagen corresponde a una aplicación de prueba con defectos intencionales. Los reportes incluyen capturas reales, prioridades, recomendaciones y cobertura de aspectos revisados o pendientes.
+La imagen corresponde a una aplicación de prueba con defectos intencionales. Los reportes separan errores y mejoras, puntúan cada aspecto de 1 a 100 con lo que falta para llegar a 100 y marcan la zona de cada problema en capturas reales.
 
 ## Instalación
 
@@ -73,15 +73,21 @@ El servidor devuelve instrucciones al agente y proporciona un checklist para die
 
 1. `audit_start`: define URL, tareas y alcance; devuelve `audit_id`.
 2. `browser_*`: el agente navega y realiza las tareas mediante Playwright MCP.
-3. `audit_capture`: guarda el viewport seleccionado, devuelve la imagen y `evidence_id`, ejecuta axe y recoge tiempos de navegación. Se puede omitir axe con `run_axe: false`.
-4. `audit_finding`: registra categoría, prioridad, observación, impacto, propuesta, pasos, evidencia y confianza. `region: {x, y, width, height}` marca un área de la captura en píxeles del viewport.
+3. `audit_capture`: guarda el viewport seleccionado, devuelve la imagen y `evidence_id`, ejecuta axe y recoge tiempos de navegación. Se puede omitir axe con `run_axe: false`. Si una regla axe o un desbordamiento se repite en la misma página, la nueva captura se añade al hallazgo existente en lugar de duplicarlo.
+4. `audit_finding`: registra tipo (`kind`: `bug` si algo no funciona, se contradice o muestra datos incorrectos; `improvement` si funciona pero se puede mejorar), categoría, prioridad, observación, impacto, propuesta, pasos, evidencia y confianza. La evidencia puede ser una captura o una medición Lighthouse. `region: {x, y, width, height}` marca un área de una captura en píxeles del viewport.
 5. `audit_lighthouse`: mide una URL pública en móvil o escritorio, preserva los informes originales y devuelve una evidencia de rendimiento.
 6. `audit_assess`: marca un aspecto como revisado, parcial o no aplicable, con explicación y evidencia. Los aspectos sin evaluación quedan pendientes.
-7. `audit_report`: genera el HTML con imágenes incorporadas, filtros por prioridad, cobertura y recomendaciones. Puede imprimirse o guardarse como PDF desde el navegador.
+7. `audit_report`: genera el HTML con imágenes incorporadas. Puede imprimirse o guardarse como PDF desde el navegador. Está pensado para leerse sin conocimientos técnicos:
+   - **Resumen en números:** puntuación general, cantidad de errores y de mejoras, y problemas de accesibilidad automáticos.
+   - **Por dónde empezar:** los 5 problemas de mayor prioridad.
+   - **Puntuación por aspecto (1 a 100):** cada aspecto parte de 100 y resta puntos por problema abierto (crítica 25, alta 15, media 8, baja 3; la mitad si está por validar). Al abrir un aspecto se ve qué arreglar para llegar a 100 y cuántos puntos recupera cada arreglo.
+   - **Errores y mejoras por separado:** cada tarjeta dice qué pasa, por qué importa y qué hacer, y muestra la zona del problema ampliada y marcada en la captura. Se pueden filtrar por tipo, prioridad y pantalla.
+   - **Detectado automáticamente:** las reglas de axe y los desbordamientos agrupados, una entrada por problema con las pantallas donde aparece, en lugar de una por página.
+   - Los datos técnicos (selectores, métricas por captura) quedan en `audit.json`, no en el reporte.
 
-`audit_status` recupera la auditoría guardada usando su ID, incluso después de reiniciar el servidor. Cada hallazgo necesita una captura de esa auditoría; no se aceptan evidencias de otra auditoría ni regiones fuera de la imagen.
+`audit_status` recupera la auditoría guardada usando su ID, incluso después de reiniciar el servidor. Cada hallazgo necesita una evidencia de esa auditoría; no se aceptan evidencias de otra auditoría ni regiones fuera de la imagen.
 
-Los hallazgos automáticos de axe identifican reglas y selectores; el agente debe inspeccionar esos elementos y capturar su ubicación si quedan fuera del viewport. Los casos `incomplete` se conservan para revisión manual. Detectar desbordamiento horizontal produce una hipótesis, porque puede ser intencional en una tabla.
+Los hallazgos automáticos de axe identifican reglas y selectores (guardados en `audit.json`); el agente debe inspeccionar esos elementos y capturar su ubicación si quedan fuera del viewport. Los casos `incomplete` se conservan para revisión manual. Detectar desbordamiento horizontal produce una hipótesis, porque puede ser intencional en una tabla.
 
 ## Reportes y sesiones
 
@@ -90,7 +96,7 @@ Se guardan en `reports/<audit_id>/`:
 - `audit.json`: capturas, evaluaciones, hallazgos, resumen y resultados Lighthouse.
 - `<evidence_id>.png`: captura del estado explorado.
 - `<evidence_id>.json`: datos técnicos del estado capturado.
-- `report.html`: reporte principal con las imágenes incorporadas; puedes compartir ese archivo sin las PNG.
+- `report.html`: reporte principal con las imágenes incorporadas una sola vez, aunque varios hallazgos usen la misma captura; puedes compartir ese archivo sin las PNG.
 - `<evidence_id>-lighthouse.html` y `.json`: informes completos de Lighthouse. Comparte la carpeta si necesitas conservar los enlaces a los informes originales.
 
 El navegador de exploración es visible por defecto. Puedes iniciar sesión manualmente en él o usar una cuenta de pruebas mediante el agente; la sesión se comparte entre las herramientas de navegación y axe. Al cerrar el servidor se cierra el navegador y se descarta la sesión. Los reportes permanecen.
@@ -130,7 +136,7 @@ npm test
 npm run demo -- --lighthouse
 ```
 
-Los reportes, dependencias, configuraciones MCP locales, variables de entorno y cachés de Graft quedan excluidos de Git. El repositorio contiene una captura de la aplicación de prueba para ilustrar el resultado.
+Los reportes, las capturas y HTML de auditorías de clientes, las dependencias, las configuraciones MCP locales, las variables de entorno y los cachés de Graft quedan excluidos de Git. El repositorio contiene una captura de la aplicación de prueba para ilustrar el resultado.
 
 ## Licencia
 
