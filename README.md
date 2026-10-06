@@ -71,7 +71,7 @@ El servidor devuelve instrucciones al agente y proporciona un checklist para die
 
 ## Flujo y herramientas propias
 
-1. `audit_start`: define URL, tareas y alcance; devuelve `audit_id`.
+1. `audit_start`: define URL, tareas, alcance y, si hace falta, `project`. Sin `project`, la carpeta sale del host. Devuelve `audit_id`.
 2. `browser_*`: el agente navega y realiza las tareas mediante Playwright MCP.
 3. `audit_capture`: guarda el viewport seleccionado, devuelve la imagen y `evidence_id`, ejecuta axe y recoge tiempos de navegación. Se puede omitir axe con `run_axe: false`. Si una regla axe o un desbordamiento se repite en la misma página, la nueva captura se añade al hallazgo existente en lugar de duplicarlo.
 4. `audit_finding`: registra tipo (`kind`: `bug` si algo no funciona, se contradice o muestra datos incorrectos; `improvement` si funciona pero se puede mejorar), categoría, prioridad, observación, impacto, propuesta, pasos, evidencia y confianza. La evidencia puede ser una captura o una medición Lighthouse. `region: {x, y, width, height}` marca un área de una captura en píxeles del viewport.
@@ -92,7 +92,7 @@ Los hallazgos automáticos de axe identifican reglas y selectores (guardados en 
 
 ## Reportes y sesiones
 
-Se guardan en `reports/<audit_id>/`:
+Se guardan en `reports/<proyecto>/<audit_id>/`. El proyecto es el nombre pasado a `audit_start` o, si no hay nombre, el host de la URL (`localhost-3000`, `example-com`). Así las auditorías de aplicaciones distintas no comparten carpeta. Las que ya existían en `reports/<audit_id>/` siguen abriéndose. Las capturas sueltas del navegador quedan en `reports/.browser/`, fuera de los reportes.
 
 - `audit.json`: capturas, evaluaciones, hallazgos, resumen y resultados Lighthouse.
 - `<evidence_id>.png`: captura del estado explorado.

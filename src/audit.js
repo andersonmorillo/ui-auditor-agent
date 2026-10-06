@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -23,7 +23,7 @@ const category = z.enum(Object.keys(categories));
 const region = z.object({ x: z.number().nonnegative(), y: z.number().nonnegative(), width: z.number().positive(), height: z.number().positive() });
 const base = { audit_id: id };
 export const schemas = {
-  audit_start: z.object({ title: text, url: httpUrl, flows: z.array(text).max(30).default([]), scope: text.default('Evaluación exploratoria de la interfaz web') }),
+  audit_start: z.object({ title: text, url: httpUrl, project: z.string().trim().min(1).max(80).optional(), flows: z.array(text).max(30).default([]), scope: text.default('Evaluación exploratoria de la interfaz web') }),
   audit_capture: z.object({ ...base, label: text, run_axe: z.boolean().default(true), mask_selectors: z.array(text).max(30).default([]) }),
   audit_finding: z.object({
     ...base, kind: z.enum(['bug', 'improvement']), category, severity: z.enum(['critical', 'high', 'medium', 'low']), title: text, observed: text, impact: text, recommendation: text,
@@ -35,10 +35,32 @@ export const schemas = {
   audit_report: z.object({ ...base, summary: text }),
 };
 
-export function auditDir(root, auditId) { return path.join(root, id.parse(auditId)); }
-export async function loadAudit(root, auditId) { return JSON.parse(await readFile(path.join(auditDir(root, auditId), 'audit.json'), 'utf8')); }
+export function projectSlug(value) {
+  const slug = String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  if (!slug) throw new Error('El nombre del proyecto no es válido.');
+  return slug;
+}
+// New audits live in reports/<project>/<audit_id>. Audits saved before that stay in reports/<audit_id>.
+export function auditDir(root, audit) {
+  const auditId = id.parse(typeof audit === 'string' ? audit : audit.id);
+  return typeof audit === 'object' && audit.project_slug ? path.join(root, audit.project_slug, auditId) : path.join(root, auditId);
+}
+export async function resolveAuditDir(root, auditId) {
+  const parsed = id.parse(auditId);
+  const legacy = path.join(root, parsed);
+  try { await readFile(path.join(legacy, 'audit.json')); return legacy; } catch { /* nested by project */ }
+  // ponytail: one readdir per project folder; add an index if the reports root grows past a few hundred projects
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const candidate = path.join(root, entry.name, parsed);
+    try { await readFile(path.join(candidate, 'audit.json')); return candidate; } catch { /* another project */ }
+  }
+  throw new Error('No se encontró la auditoría.');
+}
+export async function loadAudit(root, auditId) { return JSON.parse(await readFile(path.join(await resolveAuditDir(root, auditId), 'audit.json'), 'utf8')); }
 export async function saveAudit(root, audit) {
-  const dir = auditDir(root, audit.id);
+  const dir = auditDir(root, audit);
   await mkdir(dir, { recursive: true });
   const temporary = path.join(dir, `audit-${randomUUID()}.tmp`);
   await writeFile(temporary, JSON.stringify(audit, null, 2));
@@ -46,7 +68,8 @@ export async function saveAudit(root, audit) {
 }
 
 export async function startAudit(root, input) {
-  const audit = { id: randomUUID(), ...input, created_at: new Date().toISOString(), captures: [], findings: [], assessments: {}, lighthouse: [] };
+  const project_slug = projectSlug(input.project || new URL(input.url).host);
+  const audit = { id: randomUUID(), ...input, project_slug, created_at: new Date().toISOString(), captures: [], findings: [], assessments: {}, lighthouse: [] };
   await saveAudit(root, audit);
   return audit;
 }
@@ -162,7 +185,7 @@ table.coverage{width:100%;border-collapse:collapse;background:var(--card);border
 @media print{body{background:#fff}.filters,nav{display:none}.card[hidden],section[hidden]{display:block!important}.card{display:grid!important}}`;
 
 export async function renderReport(root, audit, summary) {
-  const dir = auditDir(root, audit.id);
+  const dir = auditDir(root, audit);
   // Each screenshot is embedded once in an SVG sprite and drawn with <use>, so findings that share a capture do not repeat its bytes.
   const sprites = [];
   for (const capture of audit.captures) {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -18,7 +18,7 @@ import { addFinding, assess, auditDir, categories, loadAudit, recordAutomatedFin
 const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const descriptions = {
-  audit_start: 'Inicia una auditoría de interfaz. Devuelve audit_id, criterios y flujo de trabajo. Luego navega con las herramientas browser_*.',
+  audit_start: 'Inicia una auditoría de interfaz. project separa los reportes de cada aplicación; si se omite, se usa el host de la URL. Devuelve audit_id, criterios y flujo de trabajo. Luego navega con las herramientas browser_*.',
   audit_capture: 'Captura el viewport de la pestaña seleccionada, ejecuta axe y recoge métricas. Devuelve una imagen y evidence_id. mask_selectors oculta elementos SOLO en la imagen; los datos técnicos no se redactan. Una regla axe o un desbordamiento repetido en la misma página se añade al hallazgo existente.',
   audit_finding: 'Registra un hallazgo con evidencia real: kind=bug si algo no funciona, se contradice o muestra datos incorrectos; kind=improvement si funciona pero se puede mejorar. Incluye impacto, pasos y recomendación. evidence_id puede ser una captura o una medición de audit_lighthouse. region marca el área en píxeles del viewport y solo se admite en capturas. Distingue observación de hipótesis.',
   audit_assess: 'Registra la cobertura de un aspecto. Usa partial si quedan criterios, flujos o navegadores pendientes. reviewed no significa aprobado.',
@@ -28,7 +28,7 @@ const descriptions = {
 };
 
 export const workflow = `Evalúa la aplicación mediante interacción real, sin editar su código.
-1. Usa audit_start con la URL, el alcance y las tareas que quieres comprobar.
+1. Usa audit_start con la URL, el alcance y las tareas que quieres comprobar. Pasa project con el nombre de la aplicación cuando varias compartan host, para que sus reportes no se mezclen.
 2. Navega con browser_navigate; observa browser_snapshot y las imágenes de audit_capture. Usa las herramientas de click, formularios, teclado, pestañas y consola/red para explorar los flujos.
 3. Captura cada pantalla y estado relevante: inicial, carga si observable, vacío, error, éxito; escritorio (1440x900), tablet (768x1024) y móvil (390x844) mediante browser_resize. Desplázate y captura también las secciones fuera del viewport.
 4. Recorre las tareas reales, prueba entradas inválidas y recuperación, teclado y zoom. Verifica el resultado de las acciones. Si necesitas autenticarte, usa una cuenta de pruebas autorizada o pide al usuario iniciar sesión en el navegador visible; nunca registres contraseñas.
@@ -47,13 +47,13 @@ export async function createAuditor({
   browser = process.env.UI_AUDITOR_BROWSER ?? 'chrome',
 } = {}) {
   z.enum(['chrome', 'msedge', 'firefox', 'webkit']).parse(browser);
-  await mkdir(reportsRoot, { recursive: true });
+  await mkdir(path.join(reportsRoot, '.browser'), { recursive: true });
   const chromium = browser === 'chrome' || browser === 'msedge';
   let browserInstance;
   const playwright = await createConnection({
     browser: { isolated: false },
     capabilities: ['core', 'core-navigation', 'core-tabs', 'core-input', 'network'],
-    outputDir: reportsRoot, filePaths: 'absolute', webmcp: false,
+    outputDir: path.join(reportsRoot, '.browser'), filePaths: 'absolute', webmcp: false,
   }, async () => {
     browserInstance = await playwrightBrowser[chromium ? 'chromium' : browser].launch({ headless, ...(chromium ? { channel: browser } : {}) });
     return await browserInstance.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
@@ -72,12 +72,13 @@ export async function createAuditor({
 
   async function capture(audit, args) {
     const evidenceId = randomUUID();
-    const dir = auditDir(reportsRoot, audit.id);
+    const dir = auditDir(reportsRoot, audit);
     const dataFile = path.join(dir, `${evidenceId}.json`);
     const imageFile = path.join(dir, `${evidenceId}.png`);
+    const scratch = path.join(reportsRoot, '.browser', `${evidenceId}.json`);
     // All code passed to the internal runner is generated here; it is not an agent-facing tool.
     if (args.run_axe) await callBrowser('browser_run_code_unsafe', { code: `async page => { await page.evaluate(${JSON.stringify(axe.source)}); }` });
-    await callBrowser('browser_evaluate', { filename: dataFile, function: `async () => {
+    await callBrowser('browser_evaluate', { filename: scratch, function: `async () => {
       ${args.run_axe ? `if (window.axe?.version !== ${JSON.stringify(axe.version)}) throw new Error('La página cambió durante la captura; vuelve a intentarlo cuando termine la navegación.');` : ''}
       const navigation = performance.getEntriesByType('navigation')[0];
       const round = value => typeof value === 'number' ? Math.round(value * 100) / 100 : null;
@@ -90,6 +91,8 @@ export async function createAuditor({
         axe: axeResult ? { version: axeResult.testEngine.version, violations: rules(axeResult.violations), incomplete: rules(axeResult.incomplete), passes_count: axeResult.passes.length } : null
       };
     }` });
+    await mkdir(dir, { recursive: true });
+    await rename(scratch, dataFile);
     const state = { id: evidenceId, label: args.label, captured_at: new Date().toISOString(), browser, ...JSON.parse(await readFile(dataFile, 'utf8')), mask_selectors: args.mask_selectors };
     await callBrowser('browser_run_code_unsafe', { code: `async page => {
       if (page.url() !== ${JSON.stringify(state.url)}) throw new Error('La página cambió durante la captura; vuelve a intentarlo cuando termine la navegación.');
@@ -136,7 +139,7 @@ export async function createAuditor({
           .map(item => ({ id: item.id, title: item.title, description: item.description, display_value: item.displayValue ?? '', score: item.score })),
         screenshot: lhr.audits['final-screenshot']?.details?.data ?? null,
       };
-      const dir = auditDir(reportsRoot, audit.id);
+      const dir = auditDir(reportsRoot, audit);
       await writeFile(path.join(dir, `${run.id}-lighthouse.json`), JSON.stringify(lhr, null, 2));
       audit.lighthouse.push(run);
       await saveAudit(reportsRoot, audit);
@@ -147,7 +150,7 @@ export async function createAuditor({
   const tools = {
     audit_start: async args => {
       const audit = await startAudit(reportsRoot, args);
-      return result({ audit_id: audit.id, directory: auditDir(reportsRoot, audit.id), categories, workflow });
+      return result({ audit_id: audit.id, directory: auditDir(reportsRoot, audit), categories, workflow });
     },
     audit_capture: capture,
     audit_finding: async (audit, args) => {
@@ -165,7 +168,7 @@ export async function createAuditor({
     audit_report: async (audit, args) => {
       audit.summary = args.summary;
       await saveAudit(reportsRoot, audit);
-      const dir = auditDir(reportsRoot, audit.id);
+      const dir = auditDir(reportsRoot, audit);
       const report = path.join(dir, 'report.html');
       await writeFile(report, await renderReport(reportsRoot, audit, args.summary));
       const pending = Object.keys(categories).filter(key => !audit.assessments[key] || audit.assessments[key].status === 'partial');

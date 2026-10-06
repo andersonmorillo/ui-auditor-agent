@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +7,7 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { startFixture } from './fixture.js';
-import { addFinding, renderReport } from '../src/audit.js';
+import { addFinding, auditDir, loadAudit, projectSlug, renderReport, startAudit } from '../src/audit.js';
 
 test('MCP: interacción, axe, evidencia, validación, persistencia y reporte seguro', { timeout: 120000 }, async () => {
   const reportsRoot = await mkdtemp(path.join(os.tmpdir(), 'ui-auditor-test-'));
@@ -28,7 +28,8 @@ test('MCP: interacción, axe, evidencia, validación, persistencia y reporte seg
     assert.ok(!tools.some(tool => tool.name === 'browser_run_code_unsafe'));
     const prompt = await client.getPrompt({ name: 'audit_application', arguments: { url: fixture.url } });
     assert.match(prompt.messages[0].content.text, /audit_capture/);
-    const { audit_id } = json(await call('audit_start', { title: '<script>window.pwned=1</script>', url: fixture.url }));
+    const { audit_id, directory } = json(await call('audit_start', { title: '<script>window.pwned=1</script>', url: fixture.url }));
+    assert.match(directory, new RegExp(`127-0-0-1-${new URL(fixture.url).port}`));
     await call('browser_navigate', { url: fixture.url });
     await call('browser_click', { target: '#open-settings' });
     await call('browser_type', { target: '#email', text: 'dato-invalido' });
@@ -101,4 +102,27 @@ test('Hallazgos con evidencia de Lighthouse', async () => {
   assert.match(html, new RegExp(`Evidencia: <a href="#capture-${run.id}">Lighthouse · mobile</a>`));
   assert.equal(html.split('class="verdict"').length - 1, 1);
   assert.ok(html.includes('<span class="value good">85</span>'), 'un problema alto confirmado resta 15 puntos al aspecto');
+});
+
+test('Reportes de proyectos distintos quedan separados y se pueden volver a abrir', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ui-auditor-projects-'));
+  try {
+    const first = await startAudit(root, { title: 'Uno', url: 'http://localhost:3000/', flows: [], scope: 'Uno' });
+    const second = await startAudit(root, { title: 'Dos', url: 'http://localhost:4000/', project: 'Otra app', flows: [], scope: 'Dos' });
+    assert.equal(first.project_slug, 'localhost-3000');
+    assert.equal(second.project_slug, 'otra-app');
+    assert.notEqual(path.dirname(auditDir(root, first)), path.dirname(auditDir(root, second)));
+    assert.equal((await loadAudit(root, first.id)).title, 'Uno');
+    assert.equal((await loadAudit(root, second.id)).title, 'Dos');
+    const legacyId = '44444444-4444-4444-8444-444444444444';
+    const legacyDir = path.join(root, legacyId);
+    await mkdir(legacyDir);
+    await writeFile(path.join(legacyDir, 'audit.json'), JSON.stringify({ id: legacyId, title: 'Viejo' }));
+    assert.equal((await loadAudit(root, legacyId)).title, 'Viejo');
+    assert.equal(projectSlug('../../etc'), 'etc');
+    assert.ok(auditDir(root, { id: first.id, project_slug: projectSlug('../../etc') }).startsWith(root + path.sep));
+    await assert.rejects(() => startAudit(root, { title: 'Mal', url: 'http://localhost:9/', project: '..', flows: [], scope: 'Mal' }), /proyecto/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
