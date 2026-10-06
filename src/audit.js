@@ -140,6 +140,14 @@ nav{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:18px 0 0;font
 .aspect ol{margin:6px 0 4px;padding-left:22px}.aspect li{margin:4px 0}.aspect p{margin:8px 0 0;color:var(--muted);font-size:14px}
 .legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px;margin-top:20px;font-size:14px}.legend div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.legend p{margin:6px 0 0;color:var(--muted)}
 .filters{position:sticky;top:0;z-index:2;background:var(--bg);padding:12px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line);margin-top:28px;font-size:13px;color:var(--muted)}.filters label{display:flex;gap:6px;align-items:center}select,button{font:inherit;font-size:14px;padding:6px 10px;background:#fff;border:1px solid #9ba8b7;border-radius:6px;color:var(--ink)}button{cursor:pointer}
+.verdict{border:0;margin:14px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px}.verdict legend{flex:1 0 100%;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0}
+.verdict label{display:flex;align-items:center;gap:6px;font-size:14px;border:1px solid var(--line);border-radius:999px;padding:4px 10px;background:#fff;cursor:pointer}.verdict input{accent-color:#164b94}
+.verdict label:has(input:checked){font-weight:600;border-color:#164b94;background:#e8f0fd}
+[data-finding][data-verdict="fixed"]{box-shadow:inset 4px 0 #1d7a4a}[data-finding][data-verdict="open"]{box-shadow:inset 4px 0 #b42318}[data-finding][data-verdict="invalid"]{box-shadow:inset 4px 0 #8a5a00}
+.auto-wrap{margin:8px 0}.auto-wrap>.auto{margin:0}.auto-wrap>.verdict{margin-top:8px}
+.auto-wrap[data-verdict="fixed"]{border-left:4px solid #1d7a4a}.auto-wrap[data-verdict="open"]{border-left:4px solid #b42318}.auto-wrap[data-verdict="invalid"]{border-left:4px solid #8a5a00}
+#feedback-response{display:block;width:100%;margin-top:8px;min-height:9em;font:inherit;font-size:14px;padding:8px;border:1px solid #9ba8b7;border-radius:6px;color:var(--ink);background:#fff}
+.feedback-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.feedback-label{display:block;margin-top:14px;font-size:13px;color:var(--muted);font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:16px 0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);overflow:hidden;break-inside:avoid;scroll-margin-top:70px}.card.bug{border-top:5px solid var(--bug)}.card.improvement{border-top:5px solid var(--imp)}
 .card-text{padding:18px 22px}.card-text p{margin:0}.tags{display:flex;gap:6px;flex-wrap:wrap}.num{color:var(--muted);margin-right:6px}.fix{background:var(--bg);border-radius:8px;padding:2px 14px 12px;margin-top:14px}.fix h4{color:var(--ink)}
 .card details{margin-top:12px;font-size:14px}summary{cursor:pointer;color:#164b94}.card ol{margin:6px 0 0;padding-left:20px}p.related{font-size:13px;color:var(--muted);margin-top:10px}
@@ -186,6 +194,7 @@ export async function renderReport(root, audit, summary) {
   };
   const metricsTable = run => `<table class="metrics"><tr><td>Puntuación de rendimiento</td><td>${run.score === null ? '—' : Math.round(run.score * 100) + '/100'}</td></tr>`
     + Object.entries(metricNames).map(([key, name]) => `<tr><td>${name}</td><td>${metricValue(run.metrics?.[key])}</td></tr>`).join('') + '</table>';
+  const verdict = anchor => `<fieldset class="verdict"><legend>Tu revisión</legend><label><input type="radio" name="verdict-${anchor}" value="fixed">Corregido</label><label><input type="radio" name="verdict-${anchor}" value="open">Sin corregir</label><label><input type="radio" name="verdict-${anchor}" value="invalid">No era un problema</label></fieldset>`;
 
   // Automated checks (axe, overflow) are grouped by rule across pages: one entry per problem instead of one per page.
   const groups = new Map();
@@ -202,9 +211,11 @@ export async function renderReport(root, audit, summary) {
     const pages = new Set(evidence.map(id => pathOf(captures.get(id)?.url)));
     const affected = Math.max(0, ...group.findings.map(item => item.affected ?? 0));
     const reference = group.findings[0].recommendation.match(/https?:\/\/\S+/)?.[0];
-    return { ...group, kind: 'bug', anchor: `auto-${index + 1}`, title: name, html: `<details class="auto" id="auto-${index + 1}"><summary><span class="tag ${group.severity}">Prioridad ${severityLabels[group.severity].toLowerCase()}</span>`
+    const recommendation = reference ? `${explanation} Guía: ${reference}` : explanation;
+    const anchor = `auto-${index + 1}`;
+    return { ...group, kind: 'bug', anchor, title: name, recommendation, html: `<div class="auto-wrap" data-finding="${anchor}" data-title="${escape(name)}" data-category="${escape(categories[group.category].label)}" data-severity-label="${escape(severityLabels[group.severity])}" data-recommendation="${escape(recommendation)}"><details class="auto" id="${anchor}"><summary><span class="tag ${group.severity}">Prioridad ${severityLabels[group.severity].toLowerCase()}</span>`
       + `<strong>${escape(name)}</strong><span class="tag">${pages.size} ${pages.size === 1 ? 'pantalla' : 'pantallas'}</span>${affected ? `<span class="tag">hasta ${affected} ${affected === 1 ? 'elemento' : 'elementos'} por pantalla</span>` : ''}${group.confidence === 'hypothesis' ? '<span class="tag tentative">Por validar</span>' : ''}</summary>`
-      + `<p>${escape(explanation)}</p><p>Dónde: ${evidence.map(evidenceLink).join(' · ')}</p>${reference ? `<p><a href="${escape(reference)}">Cómo corregirlo (guía de axe, en inglés)</a></p>` : ''}</details>` };
+      + `<p>${escape(explanation)}</p><p>Dónde: ${evidence.map(evidenceLink).join(' · ')}</p>${reference ? `<p><a href="${escape(reference)}">Cómo corregirlo (guía de axe, en inglés)</a></p>` : ''}</details>${verdict(anchor)}</div>` };
   });
 
   // Agent findings: errors first, then improvements; inside each, by priority.
@@ -220,12 +231,13 @@ export async function renderReport(root, audit, summary) {
       ? figure(capture, finding.region) + (finding.region ? `<details><summary>Ver la pantalla completa</summary>${figure(capture, finding.region, false)}</details>` : '')
       : `${run ? metricsTable(run) : ''}<p>Evidencia: ${evidenceLink(finding.evidence_id)}</p>`;
     const related = finding.also_seen_in?.length ? `<p class="related">También en: ${finding.also_seen_in.map(evidenceLink).join(' · ')}</p>` : '';
-    return `<article class="card ${finding.kind}" id="${finding.anchor}" data-kind="${finding.kind}" data-severity="${finding.severity}" data-page="${escape(pageOf(finding))}"><div class="card-text">`
+    return `<article class="card ${finding.kind}" id="${finding.anchor}" data-finding="${finding.anchor}" data-title="${escape(finding.title)}" data-category="${escape(categories[finding.category].label)}" data-severity-label="${escape(severityLabels[finding.severity])}" data-recommendation="${escape(finding.recommendation)}" data-kind="${finding.kind}" data-severity="${finding.severity}" data-page="${escape(pageOf(finding))}"><div class="card-text">`
       + `<div class="tags"><span class="tag ${finding.kind}">${kindLabels[finding.kind]}</span><span class="tag ${finding.severity}">Prioridad ${severityLabels[finding.severity].toLowerCase()}</span>`
       + `<span class="tag">${escape(pageName(finding))}</span>${finding.confidence === 'hypothesis' ? '<span class="tag tentative">Por validar</span>' : ''}<span class="tag points">+${pointsOf(finding)} en ${escape(categories[finding.category].label)}</span></div>`
       + `<h3><span class="num">${finding.number}.</span>${escape(finding.title)}</h3>`
       + `<h4>Qué pasa</h4><p>${escape(finding.observed)}</p><h4>Por qué importa</h4><p>${escape(finding.impact)}</p>`
       + `<div class="fix"><h4>Qué hacer</h4><p>${escape(finding.recommendation)}</p></div>`
+      + verdict(finding.anchor)
       + `<details><summary>Cómo reproducirlo</summary><ol>${finding.steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol></details>${related}</div>`
       + `<div class="card-image">${image}</div></article>`;
   };
@@ -268,13 +280,14 @@ export async function renderReport(root, audit, summary) {
       + `<p>Medición de laboratorio en un navegador aparte, sin la sesión iniciada del agente.</p>${metricsTable(run)}`
       + (run.screenshot ? `<figure><img class="shot" src="${escape(run.screenshot)}" alt="Estado final medido por Lighthouse" loading="lazy"><figcaption>Pantalla final que midió Lighthouse.</figcaption></figure>` : '')
       + (run.opportunities.length ? `<details><summary>Qué recomienda Lighthouse (${run.opportunities.length})</summary><ul>${run.opportunities.map(item => `<li>${escape(item.title)}${item.display_value ? ` · ${escape(item.display_value)}` : ''}</li>`).join('')}</ul></details>` : '')
-      + `<p><a href="${run.id}-lighthouse.html">Abrir el informe original de Lighthouse</a></p></details>`).join('');
+      + `</details>`).join('');
 
   const reviewed = Object.values(audit.assessments).filter(item => item.status === 'reviewed').length;
   const flows = audit.flows.length ? `<details><summary>Tareas revisadas (${audit.flows.length})</summary><ul>${audit.flows.map(flow => `<li>${escape(flow)}</li>`).join('')}</ul></details>` : '';
   const pages = [...new Set(ordered.map(pageOf))];
   const options = pairs => pairs.map(([value, label]) => `<option value="${escape(value)}">${escape(label)}</option>`).join('');
   const section = (id, title, lead, items) => items.length ? `<section data-group id="${id}"><h2>${title} (${items.length})</h2><p class="lead">${lead}</p>${items.map(card).join('')}</section>` : '';
+  const feedback = `<section id="feedback" data-audit-id="${escape(audit.id)}" data-audit-title="${escape(audit.title)}"><h2>Respuesta</h2><p class="lead">Resume lo que marcaste en cada tarjeta. Pégalo en el agente: solo debe cambiar el código de lo que sigue sin corregir. <strong id="feedback-count">0 de ${issues.length}</strong> tarjetas marcadas.</p><div class="feedback-actions"><button type="button" id="copy-feedback">Copiar respuesta</button><button type="button" id="save-feedback">Descargar reporte con la respuesta</button></div><label class="feedback-label" for="feedback-response">Texto para el agente<textarea id="feedback-response" readonly rows="8"></textarea></label></section>`;
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(audit.title)} — UI Auditor</title><style>${styles}</style></head><body>
 <svg class="sprites" aria-hidden="true"><defs>${sprites.join('')}</defs></svg>
 <main><header><div class="eyebrow">UI Auditor · Evaluación de interfaz</div><h1>${escape(audit.title)}</h1><p><a href="${escape(audit.url)}">${escape(audit.url)}</a> · ${escape(date(audit.created_at))}</p>
@@ -284,7 +297,7 @@ export async function renderReport(root, audit, summary) {
 <div class="stat"><strong>${automated.length}</strong><span>Problemas detectados automáticamente (accesibilidad y desbordamiento)</span></div>
 <div class="stat"><strong>${reviewed}/${Object.keys(categories).length}</strong><span>Aspectos revisados por completo</span></div></div>
 <details class="summary"><summary>Resumen del auditor: alcance, prioridades y limitaciones</summary>${prose(summary)}</details>
-<nav aria-label="Secciones del reporte">${top ? '<a href="#start">Por dónde empezar</a>' : ''}<a href="#scores">Puntuación por aspecto</a>${bugs.length ? '<a href="#bugs">Errores</a>' : ''}${improvements.length ? '<a href="#improvements">Mejoras</a>' : ''}<a href="#automatic">Detección automática</a><a href="#coverage">Qué se revisó</a><a href="#evidence">Capturas</a><button type="button" onclick="window.print()">Imprimir / guardar PDF</button></nav></header>
+<nav aria-label="Secciones del reporte">${top ? '<a href="#start">Por dónde empezar</a>' : ''}<a href="#feedback">Respuesta</a><a href="#scores">Puntuación por aspecto</a>${bugs.length ? '<a href="#bugs">Errores</a>' : ''}${improvements.length ? '<a href="#improvements">Mejoras</a>' : ''}<a href="#automatic">Detección automática</a><a href="#coverage">Qué se revisó</a><a href="#evidence">Capturas</a><button type="button" onclick="window.print()">Imprimir / guardar PDF</button></nav></header>
 ${top ? `<h2 id="start">Por dónde empezar</h2><p class="lead">${ordered.length === 1 ? 'El problema' : `Los ${Math.min(5, ordered.length)} problemas`} de mayor prioridad.</p><ol class="top">${top}</ol>` : ''}
 <h2 id="scores">Puntuación por aspecto</h2><p class="lead">Cada aspecto parte de 100 y resta puntos por cada problema abierto: crítica ${penalties.critical}, alta ${penalties.high}, media ${penalties.medium}, baja ${penalties.low} (la mitad si está por validar). Abre un aspecto para ver qué arreglar y cuántos puntos recupera cada arreglo.</p><div class="ranking">${ranking}</div>
 <div class="legend"><div><span class="tag bug">Error</span><p>Algo no funciona, se contradice o muestra datos incorrectos.</p></div><div><span class="tag improvement">Mejora</span><p>Funciona, pero cuesta entenderlo o usarlo.</p></div>
@@ -293,15 +306,30 @@ ${top ? `<h2 id="start">Por dónde empezar</h2><p class="lead">${ordered.length 
 <label>Prioridad <select data-filter="severity">${options([['all', 'Todas'], ...Object.entries(severityLabels)])}</select></label>
 <label>Pantalla <select data-filter="page">${options([['all', 'Todas'], ...pages.map(page => [page, page === 'lighthouse' ? 'Rendimiento (Lighthouse)' : pageNames.get(page) ?? page])])}</select></label>
 <span>Mostrando <strong id="shown">${ordered.length}</strong> de ${ordered.length}</span></div>` : '<p>No se registraron hallazgos manuales. Revisa la cobertura antes de interpretar este resultado.</p>'}
-${section('bugs', 'Errores', 'Cosas que no funcionan como deberían. Cada tarjeta muestra la zona exacta del problema y qué hacer.', bugs)}
-${section('improvements', 'Mejoras posibles', 'Funciona, pero se puede hacer más claro, rápido o cómodo.', improvements)}</div>
-<h2 id="automatic">Detectado automáticamente (${automated.length})</h2><p class="lead">En cada captura, axe revisa reglas de accesibilidad y el auditor comprueba si la página se sale de la pantalla. Cada entrada agrupa el mismo problema en todas las pantallas donde apareció.</p>${automated.map(item => item.html).join('') || '<p>No se detectaron problemas automáticos.</p>'}
+${section('bugs', 'Errores', 'Cosas que no funcionan como deberían. En cada tarjeta marca si ya está corregido, si sigue sin corregir o si no era un problema.', bugs)}
+${section('improvements', 'Mejoras posibles', 'Funciona, pero se puede hacer más claro, rápido o cómodo. Marca cada tarjeta igual que los errores.', improvements)}</div>
+<h2 id="automatic">Detectado automáticamente (${automated.length})</h2><p class="lead">En cada captura, axe revisa reglas de accesibilidad y el auditor comprueba si la página se sale de la pantalla. Cada entrada agrupa el mismo problema en todas las pantallas donde apareció. Márcala igual que las tarjetas.</p>${automated.map(item => item.html).join('') || '<p>No se detectaron problemas automáticos.</p>'}
+${feedback}
 <h2 id="coverage">Qué se revisó y qué quedó pendiente</h2><p class="lead">"Revisado" indica que el aspecto se evaluó; no certifica que todo esté bien.</p>${flows}<table class="coverage"><tbody>${coverage}</tbody></table>
 <h2 id="evidence">Todas las capturas (${audit.captures.length + audit.lighthouse.length})</h2><div class="gallery">${gallery || '<p>No se capturaron estados de la aplicación.</p>'}</div>
-<footer>Alcance: ${escape(audit.scope)}<br>Reporte local con imágenes incorporadas. Los datos técnicos (selectores, métricas por captura) quedan en audit.json. La revisión automática no reemplaza pruebas con personas, una auditoría completa de accesibilidad ni pruebas de seguridad.</footer></main>
+<footer>Alcance: ${escape(audit.scope)}<br>Un solo archivo HTML: las imágenes van dentro. Al descargarlo, la respuesta marcada queda en <code>audit-feedback</code>. Los datos técnicos quedan en audit.json. La revisión automática no reemplaza pruebas con personas, una auditoría completa de accesibilidad ni pruebas de seguridad.</footer></main>
+<script type="application/json" id="audit-feedback">{"items":{}}</script>
 <script>
+const feedback=document.getElementById('feedback'),feedbackStore=document.getElementById('audit-feedback'),feedbackItems=[...document.querySelectorAll('[data-finding]')],feedbackKey='ui-auditor-feedback:'+feedback.dataset.auditId,verdicts=['fixed','open','invalid'];
+const parseFeedback=raw=>{try{const data=JSON.parse(raw);return data&&data.items?data:{items:{}};}catch{return {items:{}};}};
+const embeddedFeedback=parseFeedback(feedbackStore.textContent);
+let storedFeedback={items:{}};
+try{storedFeedback=parseFeedback(localStorage.getItem(feedbackKey)||'{}');}catch{}
+const initialFeedback=Object.values(embeddedFeedback.items).some(item=>item&&item.status)?embeddedFeedback.items:storedFeedback.items;
+const feedbackState=()=>Object.fromEntries(feedbackItems.map(item=>{const picked=item.querySelector('input[type="radio"]:checked');return [item.dataset.finding,{status:picked?picked.value:'',title:item.dataset.title,category:item.dataset.category,severity:item.dataset.severityLabel,recommendation:item.dataset.recommendation}];}));
+const responseText=()=>{const entries=Object.entries(feedbackState());if(!entries.some(([,item])=>item.status))return 'Nada marcado. En cada tarjeta elige Corregido, Sin corregir o No era un problema.';const lines=['# Respuesta de la auditoría','Auditoría: '+feedback.dataset.auditTitle+' ('+feedback.dataset.auditId+')','Aplica en el código solo lo que está en Sin corregir. No cambies lo corregido ni lo que no era un problema.',''];[['open','Sin corregir'],['fixed','Corregido'],['invalid','No era un problema']].forEach(([status,heading])=>{const rows=entries.filter(([,item])=>item.status===status);if(!rows.length)return;lines.push('## '+heading);rows.forEach(([id,item])=>{lines.push('- '+item.title+' ('+id+', '+item.category+', prioridad '+item.severity+')');if(status==='open')lines.push('  - Qué hacer: '+item.recommendation);});lines.push('');});return lines.join('\\n');};
+const persistFeedback=()=>{feedbackItems.forEach(item=>{const picked=item.querySelector('input[type="radio"]:checked');item.dataset.verdict=picked?picked.value:'';});const payload={updated_at:new Date().toISOString(),response:responseText(),items:feedbackState()};document.getElementById('feedback-response').value=payload.response;document.getElementById('feedback-count').textContent=Object.values(payload.items).filter(item=>item.status).length+' de '+feedbackItems.length;feedbackStore.textContent=JSON.stringify(payload).replace(/</g,'\\\\u003c');try{localStorage.setItem(feedbackKey,feedbackStore.textContent);}catch{}};
+feedbackItems.forEach(item=>{const saved=initialFeedback[item.dataset.finding];if(saved&&verdicts.includes(saved.status)){const input=item.querySelector('input[value="'+saved.status+'"]');if(input)input.checked=true;}item.querySelectorAll('input[type="radio"]').forEach(input=>input.addEventListener('change',persistFeedback));});
+persistFeedback();
+document.getElementById('copy-feedback').addEventListener('click',async()=>{const out=document.getElementById('feedback-response');try{await navigator.clipboard.writeText(out.value);}catch{out.focus();out.select();}});
+document.getElementById('save-feedback').addEventListener('click',()=>{feedbackItems.forEach(item=>{item.querySelectorAll('input[type="radio"]').forEach(input=>{if(input.checked)input.setAttribute('checked','');else input.removeAttribute('checked');});});const blob=new Blob(['<!doctype html>\\n'+document.documentElement.outerHTML],{type:'text/html'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='report.html';link.click();URL.revokeObjectURL(link.href);});
 const cards=[...document.querySelectorAll('.card')],filters=[...document.querySelectorAll('[data-filter]')];
-const apply=()=>{let shown=0;cards.forEach(card=>{const ok=filters.every(filter=>filter.value==='all'||card.dataset[filter.dataset.filter]===filter.value);card.hidden=!ok;if(ok)shown++});document.getElementById('shown').textContent=shown;document.querySelectorAll('[data-group]').forEach(group=>{group.hidden=!group.querySelector('.card:not([hidden])')})};
+const apply=()=>{let shown=0;cards.forEach(card=>{const ok=filters.every(filter=>filter.value==='all'||card.dataset[filter.dataset.filter]===filter.value);card.hidden=!ok;if(ok)shown++});const shownEl=document.getElementById('shown');if(shownEl)shownEl.textContent=shown;document.querySelectorAll('[data-group]').forEach(group=>{group.hidden=!group.querySelector('.card:not([hidden])')})};
 filters.forEach(filter=>filter.addEventListener('change',apply));
 const reveal=hash=>{const target=hash&&document.getElementById(decodeURIComponent(hash.slice(1)));if(target&&target.tagName==='DETAILS')target.open=true};
 document.addEventListener('click',event=>{const link=event.target.closest('a[href^="#"]');if(link)reveal(link.hash)});reveal(location.hash);

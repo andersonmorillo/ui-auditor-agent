@@ -66,6 +66,10 @@ test('MCP: interacción, axe, evidencia, validación, persistencia y reporte seg
     assert.match(html, /Puntuación por aspecto/);
     assert.match(html, /Para llegar a 100/);
     assert.match(html, /<section data-group id="bugs">/);
+    assert.match(html, /id="feedback"/);
+    assert.equal(html.split('class="verdict"').length - 1, html.split('class="card ').length - 1 + html.split('class="auto"').length - 1, 'cada tarjeta y cada problema automático se puede marcar');
+    assert.ok(html.includes('value="fixed"') && html.includes('value="open"') && html.includes('value="invalid"'));
+    assert.ok(!html.includes('-lighthouse.html'), 'el reporte no enlaza un segundo HTML');
     assert.ok(!html.includes('Selectores') && !html.includes('failureSummary'), 'el reporte no muestra datos técnicos');
     assert.ok(html.includes('&lt;script&gt;window.pwned=1&lt;/script&gt;'));
     assert.ok(!html.includes('<img src=x onerror=alert(1)>'));
@@ -95,5 +99,6 @@ test('Hallazgos con evidencia de Lighthouse', async () => {
   assert.equal(addFinding(audit, input).url, run.final_url);
   const html = await renderReport(os.tmpdir(), audit, 'Resumen');
   assert.match(html, new RegExp(`Evidencia: <a href="#capture-${run.id}">Lighthouse · mobile</a>`));
+  assert.equal(html.split('class="verdict"').length - 1, 1);
   assert.ok(html.includes('<span class="value good">85</span>'), 'un problema alto confirmado resta 15 puntos al aspecto');
 });

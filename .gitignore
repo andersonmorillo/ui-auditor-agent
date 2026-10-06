@@ -3,6 +3,7 @@ reports/
 .playwright-mcp/
 .mcp.json
 .cursor/mcp.json
+.codex/config.toml
 .env
 .env.*
 !.env.example
